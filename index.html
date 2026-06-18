@@ -1091,18 +1091,39 @@ function draw() {
   if (player && player.alive) {
     player.draw(ctx);
 
-    // Player health bar
-    const barW = 50, barH = 6;
-    const barX = player.x - barW/2;
-    const barY = player.y - player.height/2 - 10;
-    ctx.fillStyle = '#333';
-    ctx.fillRect(barX, barY, barW, barH);
-    const hpPct = player.health / player.maxHealth;
-    ctx.fillStyle = hpPct > 0.5 ? '#0f0' : hpPct > 0.25 ? '#ff0' : '#f00';
-    ctx.fillRect(barX, barY, barW * hpPct, barH);
-    ctx.strokeStyle = '#555';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(barX, barY, barW, barH);
+    // 分段血量条 — 5 格，每格 100 血
+    const totalChunks = 5;
+    const chunkW = 10, chunkH = 7, gap = 2;
+    const totalW = totalChunks * chunkW + (totalChunks - 1) * gap;
+    const barX = player.x - totalW / 2;
+    const barY = player.y - player.height / 2 - 12;
+    const hpPerChunk = player.maxHealth / totalChunks;
+
+    for (let i = 0; i < totalChunks; i++) {
+      const cx = barX + i * (chunkW + gap);
+      const chunkHp = Math.max(0, Math.min(1, (player.health - i * hpPerChunk) / hpPerChunk));
+
+      // 背景（空血）
+      ctx.fillStyle = '#1a1a1a';
+      ctx.fillRect(cx, barY, chunkW, chunkH);
+
+      // 血量填充
+      if (chunkHp > 0) {
+        if (chunkHp >= 1) {
+          ctx.fillStyle = '#0f0';
+        } else if (chunkHp > 0.5) {
+          ctx.fillStyle = '#8f0';
+        } else {
+          ctx.fillStyle = '#f80';
+        }
+        ctx.fillRect(cx, barY, chunkW * chunkHp, chunkH);
+      }
+
+      // 边框
+      ctx.strokeStyle = '#444';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(cx, barY, chunkW, chunkH);
+    }
 
     // Active power-up indicators
     let indicatorY = barY - 18;
