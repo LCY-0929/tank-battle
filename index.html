@@ -146,6 +146,9 @@ let score = 0;
 let kills = 0;
 let level = 1;
 let lives = 3;
+let levelName = '';
+let levelDesc = '';
+let bossAlive = false;
 let player = null;
 let enemies = [];
 let bullets = [];
@@ -170,32 +173,66 @@ const ENEMY_FIRE_RATE = 90;
 const MAX_ENEMIES = 6;
 const POWERUP_DURATION = 600; // frames (10 sec)
 
+// Boss constants
+const BOSS_BASE_HP = 300;
+const BOSS_HP_PER_LEVEL = 150;
+const BOSS_DAMAGE = 60;
+const BOSS_SPEED = 0.5;
+const BOSS_SIZE = 1.6;   // scale factor
+const BOSS_FIRE_RATE = 50;
+const BOSS_BULLET_SPEED = 5;
+
 // Player class
 class Tank {
-  constructor(x, y, color, isPlayer = false) {
+  constructor(x, y, color, isPlayer = false, isBoss = false) {
     this.x = x; this.y = y;
-    this.width = 34; this.height = 34;
-    this.color = color;
     this.isPlayer = isPlayer;
-    this.angle = isPlayer ? 0 : Math.random() * Math.PI * 2;
-    this.speed = isPlayer ? PLAYER_SPEED : ENEMY_SPEED;
-    this.health = isPlayer ? 500 : 30;
-    this.maxHealth = this.health;
-    this.fireCooldown = 0;
-    this.fireRate = isPlayer ? PLAYER_FIRE_RATE : ENEMY_FIRE_RATE;
+    this.isBoss = isBoss;
+    this.color = color;
     this.alive = true;
     this.invincible = 0;
-    // Power-ups
+
+    // Size
+    if (isBoss) {
+      this.width = 34 * BOSS_SIZE;
+      this.height = 34 * BOSS_SIZE;
+    } else {
+      this.width = 34;
+      this.height = 34;
+    }
+
+    this.angle = isPlayer ? 0 : Math.random() * Math.PI * 2;
+    this.speed = isPlayer ? PLAYER_SPEED : (isBoss ? BOSS_SPEED : ENEMY_SPEED);
+
+    // Health & damage
+    if (isPlayer) {
+      this.health = 500;
+      this.bulletDamage = 10;
+    } else if (isBoss) {
+      this.health = BOSS_BASE_HP + BOSS_HP_PER_LEVEL * (level - 1);
+      this.bulletDamage = BOSS_DAMAGE;
+    } else {
+      this.health = 20 + level * 10;
+      this.bulletDamage = ENEMY_BULLET_DAMAGE;
+    }
+    this.maxHealth = this.health;
+
+    this.fireCooldown = 0;
+    this.fireRate = isPlayer ? PLAYER_FIRE_RATE : (isBoss ? BOSS_FIRE_RATE : ENEMY_FIRE_RATE);
+
+    // Power-ups (player only)
     this.speedBoost = 0;
     this.rapidFire = 0;
     this.shieldActive = 0;
     this.multiShot = 0;
+
     // AI
     this.aiDirChange = 0;
     this.aiTargetAngle = this.angle;
     this.aiStuck = 0;
     this.aiPrevX = x;
     this.aiPrevY = y;
+    this.burstTimer = 0;
   }
 
   getBounds() {
@@ -244,13 +281,31 @@ class Tank {
     if (this.fireCooldown <= 0) {
       this.fireCooldown = rate;
       const baseAngle = this.angle;
-      if (this.multiShot > 0) {
-        // Triple shot
+      const dmg = this.bulletDamage;
+      const spawnDist = this.isBoss ? 30 : 22;
+
+      if (this.isBoss) {
+        // Boss: 5 发扇形散射
+        for (let i = -2; i <= 2; i++) {
+          const a = baseAngle + i * 0.15;
+          const bx = this.x + Math.cos(a) * spawnDist;
+          const by = this.y + Math.sin(a) * spawnDist;
+          const b = new Bullet(bx, by, a, false, dmg);
+          b.speed = BOSS_BULLET_SPEED;
+          if (i === 0) { b.radius = 6; }
+          bullets.push(b);
+        }
+      } else if (this.multiShot > 0) {
         for (let off = -0.2; off <= 0.2; off += 0.2) {
-          bullets.push(new Bullet(this.x, this.y, baseAngle + off, this.isPlayer));
+          const a = baseAngle + off;
+          const bx = this.x + Math.cos(a) * spawnDist;
+          const by = this.y + Math.sin(a) * spawnDist;
+          bullets.push(new Bullet(bx, by, a, true, dmg));
         }
       } else {
-        bullets.push(new Bullet(this.x, this.y, baseAngle, this.isPlayer));
+        const bx = this.x + Math.cos(baseAngle) * spawnDist;
+        const by = this.y + Math.sin(baseAngle) * spawnDist;
+        bullets.push(new Bullet(bx, by, baseAngle, this.isPlayer, dmg));
       }
     }
   }
@@ -260,10 +315,19 @@ class Tank {
     ctx.translate(this.x, this.y);
     ctx.rotate(this.angle);
 
+    // Boss aura glow
+    if (this.isBoss) {
+      ctx.beginPath();
+      ctx.arc(0, 0, this.width / 2 + 6, 0, Math.PI * 2);
+      const auraAlpha = 0.1 + Math.sin(Date.now() / 200) * 0.05;
+      ctx.fillStyle = `rgba(255, 50, 0, ${auraAlpha})`;
+      ctx.fill();
+    }
+
     // Shield effect
     if (this.shieldActive > 0) {
       ctx.beginPath();
-      ctx.arc(0, 0, 24, 0, Math.PI * 2);
+      ctx.arc(0, 0, this.width / 2 + 4, 0, Math.PI * 2);
       ctx.strokeStyle = `rgba(0, 200, 255, ${0.5 + Math.sin(Date.now()/100)*0.3})`;
       ctx.lineWidth = 3;
       ctx.stroke();
@@ -279,12 +343,12 @@ class Tank {
     const h = this.height / 2;
 
     // Tracks
-    ctx.fillStyle = '#1a1a1a';
+    ctx.fillStyle = this.isBoss ? '#111' : '#1a1a1a';
     ctx.fillRect(-w, -h, 7, this.height);
     ctx.fillRect(w - 7, -h, 7, this.height);
 
     // Track details
-    ctx.strokeStyle = '#333';
+    ctx.strokeStyle = this.isBoss ? '#222' : '#333';
     ctx.lineWidth = 1;
     for (let i = -h + 4; i < h; i += 6) {
       ctx.beginPath();
@@ -303,6 +367,10 @@ class Tank {
       bodyGrad.addColorStop(0, '#4a4');
       bodyGrad.addColorStop(0.5, '#2a2');
       bodyGrad.addColorStop(1, '#181');
+    } else if (this.isBoss) {
+      bodyGrad.addColorStop(0, '#d22');
+      bodyGrad.addColorStop(0.5, '#600');
+      bodyGrad.addColorStop(1, '#300');
     } else {
       bodyGrad.addColorStop(0, '#a44');
       bodyGrad.addColorStop(0.5, '#822');
@@ -312,48 +380,80 @@ class Tank {
     ctx.fillRect(-w + 7, -h + 2, this.width - 14, this.height - 4);
 
     // Body border
-    ctx.strokeStyle = this.isPlayer ? '#6c6' : '#c66';
-    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = this.isPlayer ? '#6c6' : (this.isBoss ? '#f44' : '#c66');
+    ctx.lineWidth = this.isBoss ? 2.5 : 1.5;
     ctx.strokeRect(-w + 7, -h + 2, this.width - 14, this.height - 4);
 
-    // Turret base (circle)
-    ctx.fillStyle = this.isPlayer ? '#3a3' : '#933';
+    // Boss skull emblem
+    if (this.isBoss) {
+      ctx.fillStyle = '#fff';
+      ctx.font = `${Math.floor(this.width * 0.4)}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('☠', 0, 0);
+    }
+
+    // Turret base
+    const turretR = this.isBoss ? 16 : 10;
+    ctx.fillStyle = this.isPlayer ? '#3a3' : (this.isBoss ? '#800' : '#933');
     ctx.beginPath();
-    ctx.arc(0, 0, 10, 0, Math.PI * 2);
+    ctx.arc(0, 0, turretR, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = this.isPlayer ? '#5c5' : '#c55';
+    ctx.strokeStyle = this.isPlayer ? '#5c5' : (this.isBoss ? '#f44' : '#c55');
+    ctx.lineWidth = this.isBoss ? 2 : 1;
     ctx.stroke();
 
-    // Barrel
-    ctx.fillStyle = this.isPlayer ? '#2a2' : '#711';
-    ctx.fillRect(-3, -20, 6, 18);
-
+    // Barrel(s)
+    const barrelLen = this.isBoss ? 28 : 18;
+    const barrelW = this.isBoss ? 5 : 3;
+    const barrelTip = this.isBoss ? 6 : 4;
+    ctx.fillStyle = this.isPlayer ? '#2a2' : (this.isBoss ? '#500' : '#711');
+    // Main barrel
+    ctx.fillRect(-barrelW, -barrelLen, barrelW * 2, barrelLen);
+    // Boss: double barrel
+    if (this.isBoss) {
+      ctx.fillRect(-barrelW - 7, -barrelLen + 4, barrelW * 2, barrelLen - 4);
+      ctx.fillRect(barrelW + 3, -barrelLen + 4, barrelW * 2, barrelLen - 4);
+    }
     // Barrel tip
     ctx.fillStyle = '#333';
-    ctx.fillRect(-2, -21, 4, 4);
+    ctx.fillRect(-barrelW + 1, -barrelLen - 1, barrelW * 2 - 2, barrelTip);
 
     ctx.restore();
 
-    // Health bar (enemy only)
+    // Health bar above tank
     if (!this.isPlayer && this.health < this.maxHealth) {
-      const barW = 30, barH = 4;
+      const barW = this.isBoss ? 50 : 30;
+      const barH = this.isBoss ? 6 : 4;
+      const barY = this.y - this.height / 2 - (this.isBoss ? 14 : 10);
       ctx.fillStyle = '#333';
-      ctx.fillRect(this.x - barW/2, this.y - this.height/2 - 10, barW, barH);
+      ctx.fillRect(this.x - barW / 2, barY, barW, barH);
       const hpPct = this.health / this.maxHealth;
       ctx.fillStyle = hpPct > 0.5 ? '#0f0' : hpPct > 0.25 ? '#ff0' : '#f00';
-      ctx.fillRect(this.x - barW/2, this.y - this.height/2 - 10, barW * hpPct, barH);
+      ctx.fillRect(this.x - barW / 2, barY, barW * hpPct, barH);
+      ctx.strokeStyle = this.isBoss ? '#f44' : '#555';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(this.x - barW / 2, barY, barW, barH);
+      // Boss label
+      if (this.isBoss) {
+        ctx.fillStyle = '#f44';
+        ctx.font = 'bold 10px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('BOSS', this.x, barY - 4);
+      }
     }
   }
 }
 
 // Bullet class
 class Bullet {
-  constructor(x, y, angle, isPlayer) {
-    this.x = x + Math.cos(angle) * 22;
-    this.y = y + Math.sin(angle) * 22;
+  constructor(x, y, angle, isPlayer, damage = null) {
+    this.x = x;
+    this.y = y;
     this.angle = angle;
     this.speed = isPlayer ? BULLET_SPEED : ENEMY_BULLET_SPEED;
     this.isPlayer = isPlayer;
+    this.damage = damage || (isPlayer ? 10 : ENEMY_BULLET_DAMAGE);
     this.radius = 4;
     this.alive = true;
     this.trail = [];
@@ -573,6 +673,72 @@ function rectCollide(a, b) {
            a.bottom <= b.y || a.top >= b.y + b.h);
 }
 
+// ========== 关卡定义 ==========
+const LEVEL_DEFS = [
+  {
+    name: '训练场',
+    desc: '开阔地带，少量掩体',
+    buildWalls: () => {
+      // 四角各一小块掩体 + 中间两段短墙
+      addWall(5, 3, TILE, TILE, true);   // 左上
+      addWall(16, 3, TILE, TILE, true);  // 右上
+      addWall(5, 11, TILE, TILE, true);  // 左下
+      addWall(16, 11, TILE, TILE, true); // 右下
+      addWall(10, 5, TILE * 1.5, TILE * 0.5, false); // 中间钢墙
+    },
+    enemyCount: 2,
+    bossHP: 300,
+  },
+  {
+    name: '废墟都市',
+    desc: '散落砖墙，小心伏击',
+    buildWalls: () => {
+      // 四角掩体
+      addWall(3, 2, TILE, TILE, true);
+      addWall(18, 2, TILE, TILE, true);
+      addWall(3, 11, TILE, TILE, true);
+      addWall(18, 11, TILE, TILE, true);
+      // 中部散落
+      addWall(7, 5, TILE * 0.6, TILE * 0.6, true);
+      addWall(14, 5, TILE * 0.6, TILE * 0.6, true);
+      addWall(7, 10, TILE * 0.6, TILE * 0.6, true);
+      addWall(14, 10, TILE * 0.6, TILE * 0.6, true);
+      // 两段钢墙
+      addWall(10, 3, TILE * 0.5, TILE * 1.2, false);
+    },
+    enemyCount: 3,
+    bossHP: 450,
+  },
+  {
+    name: '钢铁要塞',
+    desc: '十字钢墙，正面决战',
+    buildWalls: () => {
+      // 十字形钢墙
+      addWall(4, 7, TILE * 1.5, TILE * 0.5, false);
+      addWall(16, 7, TILE * 1.5, TILE * 0.5, false);
+      addWall(10, 3, TILE * 0.5, TILE * 1.2, false);
+      addWall(10, 10, TILE * 0.5, TILE * 1.2, false);
+      // 四角小掩体
+      addWall(2, 2, TILE * 0.7, TILE * 0.7, true);
+      addWall(19, 2, TILE * 0.7, TILE * 0.7, true);
+      addWall(2, 11, TILE * 0.7, TILE * 0.7, true);
+      addWall(19, 11, TILE * 0.7, TILE * 0.7, true);
+    },
+    enemyCount: 4,
+    bossHP: 600,
+  },
+];
+
+function addWall(gx, gy, w, h, destructible) {
+  // gx, gy 是网格坐标，w, h 是像素尺寸（0 表示自动 TILE）
+  const bw = 10;
+  const x = gx * TILE + TILE / 2;
+  const y = gy * TILE + TILE / 2 + bw;
+  const pw = w || TILE;
+  const ph = h || TILE;
+  walls.push(new Wall(x - pw / 2, y - ph / 2, pw, ph, destructible));
+}
+
 function generateLevel(lvl) {
   walls = [];
   enemies = [];
@@ -582,105 +748,60 @@ function generateLevel(lvl) {
 
   // Border walls (indestructible)
   const bw = 10;
-  walls.push(new Wall(0, 0, W, bw, false));           // top
-  walls.push(new Wall(0, H - bw, W, bw, false));       // bottom
-  walls.push(new Wall(0, 0, bw, H, false));             // left
-  walls.push(new Wall(W - bw, 0, bw, H, false));        // right
+  walls.push(new Wall(0, 0, W, bw, false));
+  walls.push(new Wall(0, H - bw, W, bw, false));
+  walls.push(new Wall(0, 0, bw, H, false));
+  walls.push(new Wall(W - bw, 0, bw, H, false));
 
-  // Generate obstacle patterns
-  const patterns = [
-    // Pattern 1: Scattered blocks
-    () => {
-      const positions = [
-        [3,3],[3,5],[3,7],[3,9],[3,11],
-        [7,2],[7,4],[7,8],[7,10],[7,12],
-        [11,3],[11,5],[11,7],[11,9],[11,11],
-        [15,2],[15,4],[15,6],[15,8],[15,10],[15,12],
-        [5,6],[9,6],[13,6],
-      ];
-      positions.forEach(p => {
-        const x = p[0] * TILE + TILE/2;
-        const y = p[1] * TILE + TILE/2 + bw;
-        walls.push(new Wall(x, y, TILE, TILE, Math.random() > 0.3));
-      });
-    },
-    // Pattern 2: Corridors
-    () => {
-      // Horizontal walls
-      for (let row = 3; row < 14; row += 3) {
-        for (let col = 2; col < 20; col++) {
-          if (col % 4 !== 0) {
-            const x = col * TILE + TILE/2;
-            const y = row * TILE + TILE/2 + bw;
-            walls.push(new Wall(x, y, TILE, TILE, true));
-          }
-        }
-      }
-    },
-    // Pattern 3: Fortress
-    () => {
-      // Central fortress
-      const cx = 10, cy = 7;
-      for (let dx = -2; dx <= 2; dx++) {
-        for (let dy = -2; dy <= 2; dy++) {
-          if (Math.abs(dx) === 2 || Math.abs(dy) === 2) {
-            const x = (cx + dx) * TILE + TILE/2;
-            const y = (cy + dy) * TILE + TILE/2 + bw;
-            walls.push(new Wall(x, y, TILE, TILE, false));
-          } else if (Math.abs(dx) <= 1 && Math.abs(dy) <= 1) {
-            const x = (cx + dx) * TILE + TILE/2;
-            const y = (cy + dy) * TILE + TILE/2 + bw;
-            walls.push(new Wall(x, y, TILE, TILE, true));
-          }
-        }
-      }
-      // Corner bunkers
-      [[2,3],[18,3],[2,11],[18,11]].forEach(([bx, by]) => {
-        for (let dx = -1; dx <= 1; dx++) {
-          for (let dy = -1; dy <= 1; dy++) {
-            const x = (bx + dx) * TILE + TILE/2;
-            const y = (by + dy) * TILE + TILE/2 + bw;
-            walls.push(new Wall(x, y, TILE, TILE, Math.random() > 0.5));
-          }
-        }
-      });
-    }
-  ];
+  // 根据关卡索引选地图（3 张地图循环）
+  const def = LEVEL_DEFS[(lvl - 1) % LEVEL_DEFS.length];
+  def.buildWalls();
 
-  const patternIdx = (lvl - 1) % patterns.length;
-  patterns[patternIdx]();
+  // 显示关卡名
+  levelName = def.name;
+  levelDesc = def.desc;
 
-  // Spawn enemies
-  const enemyCount = Math.min(3 + lvl, MAX_ENEMIES);
-  for (let i = 0; i < enemyCount; i++) {
+  // 生成普通敌人
+  for (let i = 0; i < def.enemyCount; i++) {
     spawnEnemy();
   }
 
-  // Clear player bullets on level change
+  // 生成 Boss（血量随关卡持续增长）
+  const scaledBossHP = BOSS_BASE_HP + BOSS_HP_PER_LEVEL * (lvl - 1);
+  spawnBoss(scaledBossHP);
+
+  // Clear player bullets
   bullets = bullets.filter(b => !b.isPlayer);
 }
 
 function spawnEnemy() {
-  const sides = [
-    { x: TILE, y: Math.random() * H },               // left
-    { x: W - TILE, y: Math.random() * H },            // right
-    { x: Math.random() * W, y: TILE * 2 },            // top
-    { x: Math.random() * W, y: H - TILE * 2 },        // bottom
-  ];
-  const side = sides[Math.floor(Math.random() * sides.length)];
-
-  // Check not overlapping with player
-  if (player && Math.hypot(side.x - player.x, side.y - player.y) < 100) {
-    side.x = (side.x + W/2) % W;
-    side.y = (side.y + H/2) % H;
-  }
-
-  const enemy = new Tank(side.x, side.y, '#c33');
-  // Scale enemy stats with level
-  enemy.health = 20 + level * 10;
-  enemy.maxHealth = enemy.health;
-  enemy.speed = ENEMY_SPEED + level * 0.15;
+  const side = randomSpawnPos();
+  const enemy = new Tank(side.x, side.y, '#c33', false, false);
   enemies.push(enemy);
+}
+
+function randomSpawnPos() {
+  const sides = [
+    { x: TILE * 2, y: TILE * 2 + Math.random() * (H - TILE * 4) },
+    { x: W - TILE * 2, y: TILE * 2 + Math.random() * (H - TILE * 4) },
+    { x: TILE * 2 + Math.random() * (W - TILE * 4), y: TILE * 3 },
+    { x: TILE * 2 + Math.random() * (W - TILE * 4), y: H - TILE * 3 },
+  ];
+  let pos = sides[Math.floor(Math.random() * sides.length)];
+  // 远离玩家
+  if (player && Math.hypot(pos.x - player.x, pos.y - player.y) < 200) {
+    pos = sides[Math.floor(Math.random() * sides.length)];
+  }
+  return pos;
+}
+
+function spawnBoss(hp) {
+  const pos = randomSpawnPos();
+  const boss = new Tank(pos.x, pos.y, '#d22', false, true);
+  boss.health = hp;
+  boss.maxHealth = hp;
+  boss.tag = 'boss';
+  enemies.push(boss);
 }
 
 function spawnPowerUp() {
@@ -777,66 +898,53 @@ function updateUI() {
   livesDisplay.textContent = '❤'.repeat(lives);
 }
 
-// AI for enemies
-function updateAI(enemy) {
-  if (!player || !player.alive) return;
+// ========== AI ==========
+function commonAIMove(enemy, preferredDist) {
+  // 移动碰撞检测
+  function tryMove(dx, dy) {
+    const testTank = new Tank(enemy.x + dx, enemy.y + dy, '#000');
+    testTank.width = enemy.width;
+    testTank.height = enemy.height;
+    for (const wall of walls) {
+      if (wall.alive && testTank.collidesWithWall(wall)) return false;
+    }
+    return true;
+  }
 
   const dx = player.x - enemy.x;
   const dy = player.y - enemy.y;
   const dist = Math.hypot(dx, dy);
 
-  // Aim at player
+  // 平滑转向
   enemy.aiTargetAngle = Math.atan2(dy, dx);
-  // Smooth rotation
   let angleDiff = enemy.aiTargetAngle - enemy.angle;
   while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
   while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-  enemy.angle += angleDiff * 0.08;
+  const turnRate = enemy.isBoss ? 0.05 : 0.08;
+  enemy.angle += angleDiff * turnRate;
 
-  // Move towards player if far, strafe if close
-  if (dist > 200) {
-    const moveX = Math.cos(enemy.angle) * enemy.speed;
-    const moveY = Math.sin(enemy.angle) * enemy.speed;
+  const effectiveDist = preferredDist || (enemy.isBoss ? 250 : 200);
 
-    // Check wall collision before moving
-    const testTank = new Tank(enemy.x + moveX, enemy.y + moveY, '#000');
-    testTank.width = enemy.width;
-    testTank.height = enemy.height;
-    let canMoveX = true, canMoveY = true;
-
-    for (const wall of walls) {
-      if (!wall.alive) continue;
-      if (testTank.collidesWithWall(wall)) {
-        canMoveX = false;
-        break;
-      }
-    }
-    testTank.x = enemy.x;
-    testTank.y = enemy.y + moveY;
-    for (const wall of walls) {
-      if (!wall.alive) continue;
-      if (testTank.collidesWithWall(wall)) {
-        canMoveY = false;
-        break;
-      }
-    }
-
-    if (canMoveX) enemy.x += moveX;
-    if (canMoveY) enemy.y += moveY;
-  } else if (dist < 120) {
-    // Strafe around player
-    const strafeAngle = enemy.angle + Math.PI / 2;
-    const strafeX = Math.cos(strafeAngle) * enemy.speed * 0.7;
-    const strafeY = Math.sin(strafeAngle) * enemy.speed * 0.7;
-    enemy.x += strafeX;
-    enemy.y += strafeY;
+  if (dist > effectiveDist) {
+    // 向玩家靠近
+    const mx = Math.cos(enemy.angle) * enemy.speed;
+    const my = Math.sin(enemy.angle) * enemy.speed;
+    if (tryMove(mx, 0)) enemy.x += mx;
+    if (tryMove(0, my)) enemy.y += my;
+  } else if (dist < effectiveDist * 0.5) {
+    // 太近，横向移动
+    const strafe = enemy.angle + Math.PI / 2;
+    const sx = Math.cos(strafe) * enemy.speed * 0.7;
+    const sy = Math.sin(strafe) * enemy.speed * 0.7;
+    if (tryMove(sx, 0)) enemy.x += sx;
+    if (tryMove(0, sy)) enemy.y += sy;
   }
 
-  // Clamp
-  enemy.x = Math.max(enemy.width/2, Math.min(W - enemy.width/2, enemy.x));
-  enemy.y = Math.max(enemy.height/2, Math.min(H - enemy.height/2, enemy.y));
+  // 边界
+  enemy.x = Math.max(enemy.width / 2, Math.min(W - enemy.width / 2, enemy.x));
+  enemy.y = Math.max(enemy.height / 2, Math.min(H - enemy.height / 2, enemy.y));
 
-  // Check stuck
+  // 防卡死
   if (Math.abs(enemy.x - enemy.aiPrevX) < 0.3 && Math.abs(enemy.y - enemy.aiPrevY) < 0.3) {
     enemy.aiStuck++;
   } else {
@@ -844,21 +952,41 @@ function updateAI(enemy) {
   }
   enemy.aiPrevX = enemy.x;
   enemy.aiPrevY = enemy.y;
-
   if (enemy.aiStuck > 30) {
     enemy.angle += (Math.random() - 0.5) * 1.5;
     enemy.aiStuck = 0;
   }
 
-  // Shoot when facing player
-  const facingDiff = Math.abs(angleDiff);
-  if (facingDiff < 0.3 && dist < 500) {
-    enemy.shoot();
-  }
+  return { dx, dy, dist, angleDiff };
+}
 
-  // Random shooting
-  if (Math.random() < 0.005 && dist < 400) {
-    enemy.shoot();
+function updateAI(enemy) {
+  if (!player || !player.alive) return;
+
+  const { dist, angleDiff } = commonAIMove(enemy);
+
+  if (enemy.isBoss) {
+    // Boss AI: 持续散射射击
+    const facingDiff = Math.abs(angleDiff);
+    if (facingDiff < 0.4) {
+      enemy.shoot();
+    }
+    // 周期性爆发（连续 3 轮快速射击）
+    enemy.burstTimer = (enemy.burstTimer || 0) + 1;
+    if (enemy.burstTimer > 120) {
+      enemy.burstTimer = 0;
+      enemy.fireCooldown = 0; // 立刻重置冷却
+      enemy.shoot();
+    }
+  } else {
+    // 普通敌人
+    const facingDiff = Math.abs(angleDiff);
+    if (facingDiff < 0.3 && dist < 500) {
+      enemy.shoot();
+    }
+    if (Math.random() < 0.005 && dist < 400) {
+      enemy.shoot();
+    }
   }
 }
 
@@ -968,15 +1096,18 @@ function update() {
         const d = Math.hypot(bullet.x - enemy.x, bullet.y - enemy.y);
         if (d < enemy.width/2 + bullet.radius) {
           bullet.alive = false;
-          enemy.health -= 10;
+          enemy.health -= bullet.damage || 10;
           spawnExplosion(bullet.x, bullet.y, '#f80', 4);
           if (enemy.health <= 0) {
             enemy.alive = false;
-            spawnExplosion(enemy.x, enemy.y, '#f44', 25);
-            score += 100 * level;
-            kills++;
+            const isBoss = enemy.isBoss;
+            const boomSize = isBoss ? 50 : 25;
+            const boomColor = isBoss ? '#f80' : '#f44';
+            spawnExplosion(enemy.x, enemy.y, boomColor, boomSize);
+            score += isBoss ? (1000 * level) : (100 * level);
+            kills += isBoss ? 5 : 1;
             updateUI();
-            shakeAmount = Math.max(shakeAmount, 4);
+            shakeAmount = Math.max(shakeAmount, isBoss ? 15 : 4);
           }
           break;
         }
@@ -991,10 +1122,11 @@ function update() {
             // 护盾完全格挡伤害
             spawnExplosion(bullet.x, bullet.y, '#0cf', 8);
           } else {
-            // 扣血量，血归零才扣命
-            player.health -= ENEMY_BULLET_DAMAGE;
-            spawnExplosion(bullet.x, bullet.y, '#f44', 6);
-            shakeAmount = Math.max(shakeAmount, 3);
+            // 扣血量 = 子弹携带的伤害（由射击者决定）
+            const dmg = bullet.damage || ENEMY_BULLET_DAMAGE;
+            player.health -= dmg;
+            spawnExplosion(bullet.x, bullet.y, '#f44', dmg > 50 ? 12 : 6);
+            shakeAmount = Math.max(shakeAmount, dmg > 50 ? 6 : 3);
             player.invincible = 10; // 短暂无敌防连击
             if (player.health <= 0) {
               playerHit();
@@ -1016,11 +1148,12 @@ function update() {
   for (const p of particles) p.update();
   for (const pu of powerUps) pu.update();
 
-  // Spawn timer
+  // Spawn timer (boss 存活时偶尔增援)
   spawnTimer--;
-  if (spawnTimer <= 0 && enemies.length < MAX_ENEMIES) {
+  const maxNow = bossAlive ? MAX_ENEMIES : MAX_ENEMIES;
+  if (spawnTimer <= 0 && enemies.filter(e => !e.isBoss).length < maxNow) {
     spawnEnemy();
-    spawnTimer = 180 + Math.random() * 180; // 3-6 seconds
+    spawnTimer = bossAlive ? (300 + Math.random() * 300) : (180 + Math.random() * 180);
   }
 
   // PowerUp timer
@@ -1030,9 +1163,11 @@ function update() {
     powerUpTimer = 300 + Math.random() * 300; // 5-10 seconds
   }
 
-  // Check level complete
-  if (enemies.length === 0 && spawnTimer < 60) {
-    // All enemies defeated
+  // Boss 存活追踪
+  bossAlive = enemies.some(e => e.isBoss && e.alive);
+
+  // Check level complete: boss + all enemies dead
+  if (enemies.length === 0 && !bossAlive && spawnTimer < 60) {
     score += 500 * level;
     updateUI();
     nextLevel();
@@ -1073,6 +1208,49 @@ function draw() {
     ctx.moveTo(0, y);
     ctx.lineTo(W, y);
     ctx.stroke();
+  }
+
+  // Level name tag
+  if (levelName && gameRunning) {
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(W / 2 - 90, 16, 180, 24);
+    ctx.strokeStyle = '#444';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(W / 2 - 90, 16, 180, 24);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 13px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(`第 ${level} 关 · ${levelName}`, W / 2, 33);
+  }
+
+  // Boss HP bar at top
+  if (bossAlive && gameRunning) {
+    const boss = enemies.find(e => e.isBoss && e.alive);
+    if (boss) {
+      const bbx = W / 2 - 150, bby = 44, bbw = 300, bbh = 10;
+      // 背景
+      ctx.fillStyle = 'rgba(0,0,0,0.7)';
+      ctx.fillRect(bbx - 2, bby - 2, bbw + 4, bbh + 4);
+      // 血量槽
+      ctx.fillStyle = '#300';
+      ctx.fillRect(bbx, bby, bbw, bbh);
+      const pct = boss.health / boss.maxHealth;
+      const grad = ctx.createLinearGradient(bbx, 0, bbx + bbw, 0);
+      grad.addColorStop(0, '#f00');
+      grad.addColorStop(0.5, '#f80');
+      grad.addColorStop(1, '#f00');
+      ctx.fillStyle = grad;
+      ctx.fillRect(bbx, bby, bbw * pct, bbh);
+      // 边框
+      ctx.strokeStyle = '#f44';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(bbx - 2, bby - 2, bbw + 4, bbh + 4);
+      // 标签
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 10px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText(`☠ BOSS  ${Math.ceil(boss.health)} / ${boss.maxHealth}`, W / 2, bby - 4);
+    }
   }
 
   // Draw walls
