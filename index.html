@@ -161,7 +161,7 @@ let mouse = { x: W/2, y: H/2, down: false };
 // Constants
 const TILE = 40;
 const PLAYER_SPEED = 3;
-const ENEMY_SPEED = 1.5;
+const ENEMY_SPEED = 0.8;
 const BULLET_SPEED = 6;
 const ENEMY_BULLET_SPEED = 4;
 const PLAYER_FIRE_RATE = 15; // frames
@@ -178,7 +178,7 @@ class Tank {
     this.isPlayer = isPlayer;
     this.angle = isPlayer ? 0 : Math.random() * Math.PI * 2;
     this.speed = isPlayer ? PLAYER_SPEED : ENEMY_SPEED;
-    this.health = isPlayer ? 100 : 30;
+    this.health = isPlayer ? 500 : 30;
     this.maxHealth = this.health;
     this.fireCooldown = 0;
     this.fireRate = isPlayer ? PLAYER_FIRE_RATE : ENEMY_FIRE_RATE;
@@ -728,7 +728,7 @@ function playerHit() {
     gameOver();
   } else {
     // Respawn with invincibility
-    player.health = 100;
+    player.health = 500;
     player.invincible = 120; // 2 seconds
     player.x = W/2;
     player.y = H/2;
@@ -754,7 +754,7 @@ function nextLevel() {
   updateUI();
   player.x = W/2;
   player.y = H/2;
-  player.health = 100;
+  player.health = 500;
   player.invincible = 60;
   player.speedBoost = 0;
   player.rapidFire = 0;
