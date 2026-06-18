@@ -164,6 +164,7 @@ const PLAYER_SPEED = 3;
 const ENEMY_SPEED = 0.8;
 const BULLET_SPEED = 6;
 const ENEMY_BULLET_SPEED = 4;
+const ENEMY_BULLET_DAMAGE = 40;
 const PLAYER_FIRE_RATE = 15; // frames
 const ENEMY_FIRE_RATE = 90;
 const MAX_ENEMIES = 6;
@@ -718,18 +719,18 @@ function resetGame() {
 }
 
 function playerHit() {
-  if (player.invincible > 0) return;
+  // 只在血量归零时调用，处理扣命 + 重生
   lives--;
   updateUI();
-  spawnExplosion(player.x, player.y, '#4f4', 20);
-  shakeAmount = 8;
+  spawnExplosion(player.x, player.y, '#4f4', 25);
+  shakeAmount = 10;
 
   if (lives <= 0) {
     gameOver();
   } else {
-    // Respawn with invincibility
-    player.health = 500;
-    player.invincible = 120; // 2 seconds
+    // Respawn with full health + invincibility
+    player.health = player.maxHealth;
+    player.invincible = 180; // 3 秒无敌
     player.x = W/2;
     player.y = H/2;
     player.speedBoost = 0;
@@ -754,7 +755,7 @@ function nextLevel() {
   updateUI();
   player.x = W/2;
   player.y = H/2;
-  player.health = 500;
+  player.health = player.maxHealth;
   player.invincible = 60;
   player.speedBoost = 0;
   player.rapidFire = 0;
@@ -938,7 +939,7 @@ function update() {
             player.multiShot = POWERUP_DURATION;
             break;
           case 'health':
-            player.health = Math.min(player.health + 30, player.maxHealth);
+            player.health = Math.min(player.health + 150, player.maxHealth);
             break;
         }
       }
@@ -987,10 +988,17 @@ function update() {
         if (d < player.width/2 + bullet.radius) {
           bullet.alive = false;
           if (player.shieldActive > 0) {
+            // 护盾完全格挡伤害
             spawnExplosion(bullet.x, bullet.y, '#0cf', 8);
-            player.shieldActive = Math.max(0, player.shieldActive - 60);
           } else {
-            playerHit();
+            // 扣血量，血归零才扣命
+            player.health -= ENEMY_BULLET_DAMAGE;
+            spawnExplosion(bullet.x, bullet.y, '#f44', 6);
+            shakeAmount = Math.max(shakeAmount, 3);
+            player.invincible = 10; // 短暂无敌防连击
+            if (player.health <= 0) {
+              playerHit();
+            }
           }
         }
       }
