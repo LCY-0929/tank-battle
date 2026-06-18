@@ -149,6 +149,8 @@ let lives = 3;
 let levelName = '';
 let levelDesc = '';
 let bossAlive = false;
+let bossQueued = false;   // 普通敌人清光后，Boss 待出场
+let bossQueuedHP = 0;
 let player = null;
 let enemies = [];
 let bullets = [];
@@ -677,33 +679,29 @@ function rectCollide(a, b) {
 const LEVEL_DEFS = [
   {
     name: '训练场',
-    desc: '开阔地带，少量掩体',
+    desc: '消灭所有敌人后 Boss 登场',
     buildWalls: () => {
-      // 四角各一小块掩体 + 中间两段短墙
-      addWall(5, 3, TILE, TILE, true);   // 左上
-      addWall(16, 3, TILE, TILE, true);  // 右上
-      addWall(5, 11, TILE, TILE, true);  // 左下
-      addWall(16, 11, TILE, TILE, true); // 右下
-      addWall(10, 5, TILE * 1.5, TILE * 0.5, false); // 中间钢墙
+      addWall(5, 3, TILE, TILE, true);
+      addWall(16, 3, TILE, TILE, true);
+      addWall(5, 11, TILE, TILE, true);
+      addWall(16, 11, TILE, TILE, true);
+      addWall(10, 5, TILE * 1.5, TILE * 0.5, false);
     },
     enemyCount: 2,
     bossHP: 300,
   },
   {
     name: '废墟都市',
-    desc: '散落砖墙，小心伏击',
+    desc: '消灭所有敌人后 Boss 登场',
     buildWalls: () => {
-      // 四角掩体
       addWall(3, 2, TILE, TILE, true);
       addWall(18, 2, TILE, TILE, true);
       addWall(3, 11, TILE, TILE, true);
       addWall(18, 11, TILE, TILE, true);
-      // 中部散落
       addWall(7, 5, TILE * 0.6, TILE * 0.6, true);
       addWall(14, 5, TILE * 0.6, TILE * 0.6, true);
       addWall(7, 10, TILE * 0.6, TILE * 0.6, true);
       addWall(14, 10, TILE * 0.6, TILE * 0.6, true);
-      // 两段钢墙
       addWall(10, 3, TILE * 0.5, TILE * 1.2, false);
     },
     enemyCount: 3,
@@ -711,14 +709,12 @@ const LEVEL_DEFS = [
   },
   {
     name: '钢铁要塞',
-    desc: '十字钢墙，正面决战',
+    desc: '消灭所有敌人后 Boss 登场',
     buildWalls: () => {
-      // 十字形钢墙
       addWall(4, 7, TILE * 1.5, TILE * 0.5, false);
       addWall(16, 7, TILE * 1.5, TILE * 0.5, false);
       addWall(10, 3, TILE * 0.5, TILE * 1.2, false);
       addWall(10, 10, TILE * 0.5, TILE * 1.2, false);
-      // 四角小掩体
       addWall(2, 2, TILE * 0.7, TILE * 0.7, true);
       addWall(19, 2, TILE * 0.7, TILE * 0.7, true);
       addWall(2, 11, TILE * 0.7, TILE * 0.7, true);
@@ -766,9 +762,11 @@ function generateLevel(lvl) {
     spawnEnemy();
   }
 
-  // 生成 Boss（血量随关卡持续增长）
+  // Boss 先不入场 — 等普通敌人清光后再出
   const scaledBossHP = BOSS_BASE_HP + BOSS_HP_PER_LEVEL * (lvl - 1);
-  spawnBoss(scaledBossHP);
+  bossQueued = true;
+  bossQueuedHP = scaledBossHP;
+  bossAlive = false;
 
   // Clear player bullets
   bullets = bullets.filter(b => !b.isPlayer);
@@ -831,6 +829,8 @@ function resetGame() {
   kills = 0;
   level = 1;
   lives = 3;
+  bossQueued = false;
+  bossAlive = false;
   updateUI();
   player = new Tank(W/2, H/2, '#2a2', true);
   generateLevel(level);
@@ -900,13 +900,15 @@ function updateUI() {
 
 // ========== AI ==========
 function commonAIMove(enemy, preferredDist) {
-  // 移动碰撞检测
+  // 轻量碰撞检测：检查移动后是否撞墙
+  const hw = enemy.width / 2;
+  const hh = enemy.height / 2;
   function tryMove(dx, dy) {
-    const testTank = new Tank(enemy.x + dx, enemy.y + dy, '#000');
-    testTank.width = enemy.width;
-    testTank.height = enemy.height;
+    const nx = enemy.x + dx, ny = enemy.y + dy;
     for (const wall of walls) {
-      if (wall.alive && testTank.collidesWithWall(wall)) return false;
+      if (!wall.alive) continue;
+      if (nx - hw < wall.x + wall.w && nx + hw > wall.x &&
+          ny - hh < wall.y + wall.h && ny + hh > wall.y) return false;
     }
     return true;
   }
@@ -1006,28 +1008,31 @@ function update() {
       const len = Math.hypot(dx, dy);
       dx /= len;
       dy /= len;
+      const spd = player.speed * (player.speedBoost > 0 ? 1.8 : 1);
+      const hw = player.width / 2;
+      const hh = player.height / 2;
 
-      // Test movement
-      const testX = player.x + dx * player.speed * (player.speedBoost > 0 ? 1.8 : 1);
-      const testY = player.y + dy * player.speed * (player.speedBoost > 0 ? 1.8 : 1);
-
-      // Check wall collisions for X
-      const testTankX = new Tank(testX, player.y, '#000');
-      testTankX.width = player.width;
-      testTankX.height = player.height;
+      // X 轴移动
+      const testX = player.x + dx * spd;
       let blockedX = false;
       for (const wall of walls) {
-        if (wall.alive && testTankX.collidesWithWall(wall)) { blockedX = true; break; }
+        if (!wall.alive) continue;
+        if (testX - hw < wall.x + wall.w && testX + hw > wall.x &&
+            player.y - hh < wall.y + wall.h && player.y + hh > wall.y) {
+          blockedX = true; break;
+        }
       }
       if (!blockedX) player.x = testX;
 
-      // Check wall collisions for Y
-      const testTankY = new Tank(player.x, testY, '#000');
-      testTankY.width = player.width;
-      testTankY.height = player.height;
+      // Y 轴移动
+      const testY = player.y + dy * spd;
       let blockedY = false;
       for (const wall of walls) {
-        if (wall.alive && testTankY.collidesWithWall(wall)) { blockedY = true; break; }
+        if (!wall.alive) continue;
+        if (player.x - hw < wall.x + wall.w && player.x + hw > wall.x &&
+            testY - hh < wall.y + wall.h && testY + hh > wall.y) {
+          blockedY = true; break;
+        }
       }
       if (!blockedY) player.y = testY;
     }
@@ -1148,26 +1153,44 @@ function update() {
   for (const p of particles) p.update();
   for (const pu of powerUps) pu.update();
 
-  // Spawn timer (boss 存活时偶尔增援)
+  // Spawn timer
   spawnTimer--;
-  const maxNow = bossAlive ? MAX_ENEMIES : MAX_ENEMIES;
-  if (spawnTimer <= 0 && enemies.filter(e => !e.isBoss).length < maxNow) {
-    spawnEnemy();
-    spawnTimer = bossAlive ? (300 + Math.random() * 300) : (180 + Math.random() * 180);
+  if (!bossQueued && !bossAlive) {
+    // 正常增援（boss 未出场时）
+    const regularCount = enemies.filter(e => !e.isBoss).length;
+    if (spawnTimer <= 0 && regularCount < MAX_ENEMIES) {
+      spawnEnemy();
+      spawnTimer = 180 + Math.random() * 180;
+    }
+  }
+
+  // Boss 出场：普通敌人清光后召唤 Boss
+  if (bossQueued && enemies.filter(e => !e.isBoss).length === 0) {
+    bossQueued = false;
+    spawnBoss(bossQueuedHP);
+    bossAlive = true;
+    // 出场特效
+    const boss = enemies[enemies.length - 1];
+    if (boss) {
+      spawnExplosion(boss.x, boss.y, '#f80', 30);
+      shakeAmount = 12;
+    }
+  }
+
+  // 更新 boss 存活状态
+  if (!bossQueued) {
+    bossAlive = enemies.some(e => e.isBoss && e.alive);
   }
 
   // PowerUp timer
   powerUpTimer--;
   if (powerUpTimer <= 0 && powerUps.length < 3) {
     spawnPowerUp();
-    powerUpTimer = 300 + Math.random() * 300; // 5-10 seconds
+    powerUpTimer = 300 + Math.random() * 300;
   }
 
-  // Boss 存活追踪
-  bossAlive = enemies.some(e => e.isBoss && e.alive);
-
-  // Check level complete: boss + all enemies dead
-  if (enemies.length === 0 && !bossAlive && spawnTimer < 60) {
+  // Check level complete: all enemies dead + boss not queued/not alive
+  if (enemies.length === 0 && !bossQueued && !bossAlive) {
     score += 500 * level;
     updateUI();
     nextLevel();
@@ -1221,6 +1244,15 @@ function draw() {
     ctx.font = 'bold 13px Arial';
     ctx.textAlign = 'center';
     ctx.fillText(`第 ${level} 关 · ${levelName}`, W / 2, 33);
+  }
+
+  // Boss incoming warning
+  if (bossQueued && gameRunning) {
+    const alpha = 0.5 + Math.sin(Date.now() / 200) * 0.3;
+    ctx.fillStyle = `rgba(255, 50, 0, ${alpha})`;
+    ctx.font = 'bold 22px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('⚠ BOSS 即将登场！⚠', W / 2, 75);
   }
 
   // Boss HP bar at top
